@@ -279,7 +279,7 @@ def fomo_trader(file_name, sensitivity=1.5, max_gap=2):
 
 
 def main():
-    file_name = "uploads/mixed_trader.csv"
+    file_name = "uploads/surprise_200k_trades.csv"
     fomo_trader(file_name)
 
 

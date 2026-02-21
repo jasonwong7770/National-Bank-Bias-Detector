@@ -238,8 +238,8 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2, reactive_window_s=300):
 overtrader("uploads/mixed_trader.csv")
 
 def main():
-    file_name = "uploads/mixed_trader.csv"
+    file_name = "uploads/surprise_200k_trades.csv"
     overtrader(file_name)
-
+    
 if __name__ == "__main__":
     main()

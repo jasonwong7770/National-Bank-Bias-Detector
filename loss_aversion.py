@@ -392,7 +392,7 @@ def loss_aversion(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) ->
 
 
 def main():
-    file_name = "uploads/mixed_trader.csv"
+    file_name = "uploads/surprise_200k_trades.csv"
     loss_aversion(file_name)
 
 
