@@ -3,14 +3,18 @@ import { AnimatePresence, motion } from 'framer-motion'
 import UploadZone from './components/UploadZone'
 import FilePreview from './components/FilePreview'
 import AnalyseButton from './components/AnalyseButton'
-import { useUpload } from './hooks/useUpload'
+import DetectorOptions from './components/DetectorOptions'
+import ResultsDashboard from './components/ResultsDashboard'
+import { useAnalyse } from './hooks/useAnalyse'
 
 export default function App() {
   const [file, setFile]             = useState(null)
   const [parsedRows, setParsedRows] = useState([])
+  const [sensitivity, setSensitivity] = useState(1.5)
+  const [maxGap, setMaxGap]           = useState(2)
   const [visibleError, setVisibleError] = useState(null)
 
-  const { upload, isLoading, error, result } = useUpload()
+  const { analyse, reset, isLoading, error, result } = useAnalyse()
 
   useEffect(() => {
     if (!error) return
@@ -18,10 +22,6 @@ export default function App() {
     const t = setTimeout(() => setVisibleError(null), 6000)
     return () => clearTimeout(t)
   }, [error])
-
-  useEffect(() => {
-    if (result) console.log('[Upload result]', result)
-  }, [result])
 
   function handleFileAccepted(acceptedFile, rows) {
     setFile(acceptedFile)
@@ -35,11 +35,24 @@ export default function App() {
     setVisibleError(null)
   }
 
-  async function handleUpload() {
+  async function handleAnalyse() {
     if (!file) return
-    await upload(file)
+    await analyse(file, sensitivity, maxGap)
   }
 
+  function handleBack() {
+    setFile(null)
+    setParsedRows([])
+    setVisibleError(null)
+    reset()
+  }
+
+  // ── Results view ──────────────────────────────────────────────────
+  if (result) {
+    return <ResultsDashboard result={result} onBack={handleBack} />
+  }
+
+  // ── Upload view ───────────────────────────────────────────────────
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-start py-16 px-4"
@@ -47,7 +60,7 @@ export default function App() {
     >
       <div className="w-full" style={{ maxWidth: 680 }}>
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
+        {/* ── Header ──────────────────────────────────────────────── */}
         <header className="mb-10">
           <p
             className="font-mono text-xs tracking-[0.2em] uppercase mb-4"
@@ -67,35 +80,59 @@ export default function App() {
           </p>
         </header>
 
-        {/* ── Upload Zone ─────────────────────────────────────────────────── */}
+        {/* ── Upload Zone ─────────────────────────────────────────── */}
         <UploadZone
           onFileAccepted={handleFileAccepted}
           onFileRejected={() => {}}
         />
 
-        {/* ── File Preview ────────────────────────────────────────────────── */}
+        {/* ── File Preview ────────────────────────────────────────── */}
         <AnimatePresence>
           {file && (
-            <div className="mt-4">
+            <motion.div
+              className="mt-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+            >
               <FilePreview
                 file={file}
                 rowCount={parsedRows.length}
                 onClear={handleClear}
               />
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ── Upload Button ───────────────────────────────────────────────── */}
+        {/* ── Detector Options ────────────────────────────────────── */}
+        <AnimatePresence>
+          {file && (
+            <motion.div
+              className="mt-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+            >
+              <DetectorOptions
+                sensitivity={sensitivity}
+                maxGap={maxGap}
+                onSensitivityChange={setSensitivity}
+                onMaxGapChange={setMaxGap}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Analyse Button ──────────────────────────────────────── */}
         <div className="mt-4">
           <AnalyseButton
-            onClick={handleUpload}
+            onClick={handleAnalyse}
             isLoading={isLoading}
             disabled={!file}
           />
         </div>
 
-        {/* ── Error Banner ────────────────────────────────────────────────── */}
+        {/* ── Error Banner ────────────────────────────────────────── */}
         <AnimatePresence>
           {visibleError && (
             <motion.div
@@ -111,31 +148,6 @@ export default function App() {
               }}
             >
               {visibleError}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Success Banner ──────────────────────────────────────────────── */}
-        <AnimatePresence>
-          {result && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={{ type: 'spring', stiffness: 280, damping: 24 }}
-              className="mt-4 rounded-xl px-5 py-4 font-mono text-xs"
-              style={{
-                background: 'rgba(0,212,170,0.08)',
-                border: '1px solid rgba(0,212,170,0.2)',
-                color: '#00d4aa',
-              }}
-            >
-              {result.message}
-              {result.original_rows !== result.clean_rows && (
-                <span className="ml-2" style={{ color: '#00a882' }}>
-                  ({result.original_rows - result.clean_rows} row(s) removed during cleaning)
-                </span>
-              )}
             </motion.div>
           )}
         </AnimatePresence>

@@ -15,7 +15,7 @@ export function useAnalyse() {
     formData.append('file', file)
 
     try {
-      const response = await axios.post('/api/analyse/all', formData, {
+      const response = await axios.post('/api/analyse', formData, {
         params: {
           sensitivity,
           max_gap: maxGap,
@@ -37,5 +37,10 @@ export function useAnalyse() {
     }
   }
 
-  return { analyse, isLoading, error, result }
+  function reset() {
+    setResult(null)
+    setError(null)
+  }
+
+  return { analyse, reset, isLoading, error, result }
 }

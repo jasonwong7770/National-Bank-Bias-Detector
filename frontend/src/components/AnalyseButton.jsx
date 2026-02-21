@@ -50,13 +50,13 @@ export default function AnalyseButton({ onClick, isLoading, disabled }) {
           {isLoading ? (
             <>
               <Spinner />
-              <span>Uploading...</span>
+              <span>Analysing...</span>
             </>
           ) : noFile ? (
             <span>Select a CSV to continue</span>
           ) : (
             <>
-              <span>Upload File</span>
+              <span>Analyse Biases</span>
               <ArrowIcon />
             </>
           )}
