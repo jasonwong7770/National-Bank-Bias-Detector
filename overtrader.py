@@ -62,6 +62,26 @@ def chunk_average(chunk_timestamps):
     }
 
 
+def calculate_threshold(averages, sensitivity=1.5):
+    values = [r["avg_seconds"] for r in averages]
+    
+    # Median is robust — stays near 60s even with many anomaly chunks
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    median = (sorted_vals[n // 2] if n % 2 != 0 
+              else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2)
+    
+    # MAD = median of absolute deviations from the median
+    deviations = sorted([abs(v - median) for v in values])
+    n = len(deviations)
+    mad = (deviations[n // 2] if n % 2 != 0
+           else (deviations[n // 2 - 1] + deviations[n // 2]) / 2)
+    
+    # Scale factor 1.4826 makes MAD comparable to std dev for normal distributions
+    threshold = median - sensitivity * (1.4826 * mad)
+    
+    # print(f"Median: {median:.1f}s | MAD: {mad:.1f}s | Anomaly threshold: below {threshold:.1f}s\n")
+    return threshold
 def robust_threshold(values, sensitivity, low=True):
     s      = sorted(values)
     n      = len(s)
@@ -194,6 +214,86 @@ def detect_reactive_trading(trades, sensitivity, max_gap, reactive_window_s):
 # ── entry point ────────────────────────────────────────────────────────────────
 
 def overtrader(file_name, sensitivity=1.5, max_gap=2, reactive_window_s=300):
+    time = []
+    with open(file_name, "r") as file:
+        next(file)
+        for line in file:
+            raw = line.split(",")[0].strip()
+            if " " not in raw:
+                continue
+
+            date_part, time_part = raw.split(" ")
+            year, month, day     = date_part.split("-")
+            hour, minute, second = time_part.split(":")
+
+            timestamp = Timestamp(
+                year=int(year), month=int(month), day=int(day),
+                hour=int(hour), minute=int(minute), second=int(second)
+            )
+            time.append(timestamp)
+
+        trades = []
+
+        with open(file_name, "r") as file:
+            next(file)
+            for line in file:
+                parts = line.strip().split(",")
+                if len(parts) < 8:
+                    continue
+                raw = parts[0].strip()
+                if " " not in raw:
+                    continue
+                date_part, time_part = raw.split(" ")
+                y, mo, d = date_part.split("-")
+                h, mi, s = time_part.split(":")
+                ts = Timestamp(int(y), int(mo), int(d), int(h), int(mi), int(s))
+                trades.append(Trade(
+                    timestamp   = ts,
+                    asset       = parts[1].strip(),
+                    side        = parts[2].strip(),
+                    quantity    = float(parts[3]),
+                    entry_price = float(parts[4]),
+                    exit_price  = float(parts[5]),
+                    profit_loss = float(parts[6]),
+                    balance     = float(parts[7])
+                ))
+
+        print(f"\nLoaded {len(trades)} trades from {file_name}\n")
+
+        results = {
+            "time_clustering":  detect_time_clustering(trades, sensitivity, max_gap),
+            "reactive_trading": detect_reactive_trading(trades, sensitivity, max_gap, reactive_window_s),
+        }
+
+    # Split into chunks of 10
+    chunks = [time[i:i + 10] for i in range(0, len(time), 10)]
+
+    # First pass — compute all chunk averages
+    averages     = []
+    valid_chunks = []
+    for chunk in chunks:
+        if len(chunk) < 2:
+            continue
+        averages.append(chunk_average(chunk))
+        valid_chunks.append(chunk)
+
+    # Dynamically determine anomaly threshold
+    threshold = calculate_threshold(averages, sensitivity)
+
+    # Second pass — flag each chunk
+    is_anomaly = [r["avg_seconds"] < threshold for r in averages]
+
+    # Third pass — fill small gaps so nearby anomaly regions merge
+    is_anomaly = fill_gaps(is_anomaly, max_gap=max_gap)
+
+    # Build chunk summary lines
+    chunk_lines = []
+    for chunk, _, anomaly in zip(valid_chunks, averages, is_anomaly):
+        isflag = True if anomaly else False
+        chunk_lines.append((f"{chunk[0].to_string()};{chunk[-1].to_string()}", isflag))
+
+    # Final pass — group consecutive anomaly chunks into periods
+    overtraded    = []
     trades = []
 
     with open(file_name, "r") as file:
@@ -227,19 +327,17 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2, reactive_window_s=300):
         "reactive_trading": detect_reactive_trading(trades, sensitivity, max_gap, reactive_window_s),
     }
 
-    print("\n--- Overtrading Periods ---")
-    for behavior, periods in results.items():
-        print(f"\n{behavior} ({len(periods)} period(s)):")
-        for p in periods:
-            print(f"  {p}")
+    # print("\n--- Overtrading Periods ---")
+    # for period in overtraded:
+    #     print(period)
 
-    return results
-
-overtrader("uploads/mixed_trader.csv")
+    return overtraded, chunk_lines, results
 
 def main():
     file_name = "uploads/surprise_200k_trades.csv"
-    overtrader(file_name)
-    
+    _, chunk_lines, _ = overtrader(file_name)
+    for line in chunk_lines:
+        print(line)
+
 if __name__ == "__main__":
     main()

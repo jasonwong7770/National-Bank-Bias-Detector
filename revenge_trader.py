@@ -1,13 +1,15 @@
 '''
-CALL: loss_aversion(file_name, sensitivity=1.5, max_gap=2)
+CALL: revenge_trader(file_name, sensitivity=1.5, max_gap=2)
 Returns a dict of anomaly periods per behavior type:
 {
-  "holding_losers_too_long":   ["2025-03-01 09:30:00;2025-03-01 10:00:00", ...],
-  "closing_winners_early":     [...],
-  "risk_reward_imbalance":     [...],
-  "loss_size_exceeds_win_size":[...]
+  "size_increase_after_loss":    ["2025-03-01 09:30:00;2025-03-01 10:00:00", ...],
+  "escalation_after_loss_streak":[...]
 }
 Each entry = "start_timestamp;end_timestamp" of an anomaly window.
+
+Revenge trader: opens larger trades immediately after a loss, and increases
+risk-taking following negative P/L streaks, impulsively trying to "win back"
+losses rather than following a disciplined strategy.
 '''
 
 from dataclasses import dataclass, field
@@ -43,10 +45,9 @@ class Timestamp:
 
 @dataclass
 class Trade:
-    timestamp:        Timestamp
-    pnl:              float
-    quantity:         float
-    duration_seconds: float = field(default=0.0)   # filled after parsing
+    timestamp: Timestamp
+    pnl:       float
+    quantity:  float
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ class Trade:
 # ---------------------------------------------------------------------------
 
 def parse_trades(file_name: str) -> list[Trade]:
-    '''Read CSV, build Trade objects. Duration is gap to the next trade's open.'''
+    '''Read CSV, build Trade objects.'''
     trades = []
 
     with open(file_name, "r") as f:
@@ -64,7 +65,7 @@ def parse_trades(file_name: str) -> list[Trade]:
             if len(parts) < 7:
                 continue
 
-            raw_ts   = parts[0].strip()
+            raw_ts = parts[0].strip()
             if " " not in raw_ts:
                 continue
 
@@ -85,22 +86,11 @@ def parse_trades(file_name: str) -> list[Trade]:
 
             trades.append(Trade(timestamp=ts, pnl=pnl, quantity=quantity))
 
-    # Derive duration as gap to the next trade's open time
-    for i in range(len(trades) - 1):
-        trades[i].duration_seconds = max(
-            0.0,
-            trades[i + 1].timestamp.to_seconds() - trades[i].timestamp.to_seconds()
-        )
-    # Last trade gets the average of all other durations
-    if len(trades) > 1:
-        avg_dur = sum(t.duration_seconds for t in trades[:-1]) / (len(trades) - 1)
-        trades[-1].duration_seconds = avg_dur
-
     return trades
 
 
 # ---------------------------------------------------------------------------
-# Shared utilities  
+# Shared utilities
 # ---------------------------------------------------------------------------
 
 def calculate_threshold(scores: list[float], sensitivity: float, above: bool = True):
@@ -169,64 +159,63 @@ def group_anomaly_periods(chunks: list[list[Trade]], flags: list[bool]) -> list[
 
 
 # ---------------------------------------------------------------------------
-# Chunk scoring functions — one per loss-aversion behavior
+# Chunk scoring functions — one per revenge-trading behavior
 # ---------------------------------------------------------------------------
 
-def score_holding_losers(chunk: list[Trade]) -> float | None:
+def score_size_increase_after_loss(chunk: list[Trade]) -> float | None:
     '''
-    Ratio of avg losing-trade duration to avg winning-trade duration.
-    High ratio → losers are being held much longer than winners (anomalous).
-    Returns None when chunk has no winners or no losers.
+    For every trade that follows a loss, compute the ratio of its quantity
+    to the losing trade's quantity.  Average that ratio over the chunk.
+
+    Ratio > 1 on average → the trader consistently opens a larger position
+    right after a loss (classic revenge-trading escalation).
+
+    Returns None when the chunk contains no loss-followed-by-trade pairs.
     '''
-    win_durs  = [t.duration_seconds for t in chunk if t.pnl > 0]
-    loss_durs = [t.duration_seconds for t in chunk if t.pnl <= 0]
-    if not win_durs or not loss_durs:
+    ratios = []
+    for i in range(1, len(chunk)):
+        prev = chunk[i - 1]
+        curr = chunk[i]
+        if prev.pnl < 0 and prev.quantity > 0:
+            ratios.append(curr.quantity / (prev.quantity + 1e-9))
+    if not ratios:
         return None
-    avg_win  = sum(win_durs)  / len(win_durs)
-    avg_loss = sum(loss_durs) / len(loss_durs)
-    return avg_loss / (avg_win + 1e-9)
+    return sum(ratios) / len(ratios)
 
 
-def score_closing_winners_early(chunk: list[Trade]) -> float | None:
+def score_escalation_after_loss_streak(chunk: list[Trade]) -> float | None:
     '''
-    Average winning-trade duration within the chunk (seconds).
-    Low value → winners are being closed unusually fast (anomalous).
-    Returns None when chunk has no winners.
+    Look for sub-sequences of 2+ consecutive losses ("loss streaks") and
+    measure whether the trade immediately following the streak uses a larger
+    position than the average quantity within the streak.
+
+    Score = avg( post_streak_qty / avg_streak_qty ) across all streaks.
+    High score → the trader routinely ramps up size after a run of losses.
+
+    Returns None when the chunk contains no complete loss streaks.
     '''
-    win_durs = [t.duration_seconds for t in chunk if t.pnl > 0]
-    if not win_durs:
+    ratios = []
+    i = 0
+    while i < len(chunk):
+        # Find start of a loss streak (>= 2 consecutive losses)
+        if chunk[i].pnl < 0:
+            j = i
+            while j < len(chunk) and chunk[j].pnl < 0:
+                j += 1
+            streak_len = j - i
+            if streak_len >= 2 and j < len(chunk):
+                streak_qty = [chunk[k].quantity for k in range(i, j)]
+                avg_streak_qty = sum(streak_qty) / len(streak_qty)
+                post_qty = chunk[j].quantity
+                if avg_streak_qty > 0:
+                    ratios.append(post_qty / avg_streak_qty)
+            i = j
+        else:
+            i += 1
+
+    if not ratios:
         return None
-    return sum(win_durs) / len(win_durs)
-
-
-def score_risk_reward(chunk: list[Trade]) -> float | None:
-    '''
-    Ratio of avg absolute loss PnL to avg win PnL.
-    High ratio → losses are larger than gains (poor risk/reward).
-    Returns None when chunk has no winners or no losers.
-    '''
-    win_pnls  = [t.pnl          for t in chunk if t.pnl > 0]
-    loss_pnls = [abs(t.pnl)     for t in chunk if t.pnl <= 0]
-    if not win_pnls or not loss_pnls:
-        return None
-    avg_win  = sum(win_pnls)  / len(win_pnls)
-    avg_loss = sum(loss_pnls) / len(loss_pnls)
-    return avg_loss / (avg_win + 1e-9)
-
-
-def score_loss_size(chunk: list[Trade]) -> float | None:
-    '''
-    Ratio of avg losing-trade quantity to avg winning-trade quantity.
-    Ratio > 1 → trader is using larger positions on trades that end up losing.
-    Returns None when chunk has no winners or no losers.
-    '''
-    win_qty  = [t.quantity for t in chunk if t.pnl > 0]
-    loss_qty = [t.quantity for t in chunk if t.pnl <= 0]
-    if not win_qty or not loss_qty:
-        return None
-    avg_win  = sum(win_qty)  / len(win_qty)
-    avg_loss = sum(loss_qty) / len(loss_qty)
-    return avg_loss / (avg_win + 1e-9)
+    return sum(ratios) / len(ratios)
 
 
 # ---------------------------------------------------------------------------
@@ -234,13 +223,13 @@ def score_loss_size(chunk: list[Trade]) -> float | None:
 # ---------------------------------------------------------------------------
 
 def detect_behavior(
-    label:       str,
+    label:        str,
     valid_chunks: list[list[Trade]],
-    scores:      list[float],
-    indices:     list[int],        # positions in valid_chunks that have a score
-    above:       bool,
-    sensitivity: float,
-    max_gap:     int,
+    scores:       list[float],
+    indices:      list[int],
+    above:        bool,
+    sensitivity:  float,
+    max_gap:      int,
 ) -> list[str]:
     '''
     Generic pipeline used by every behavior:
@@ -256,7 +245,6 @@ def detect_behavior(
 
     threshold = calculate_threshold(scores, sensitivity, above=above)
 
-    # Build a flags list aligned with valid_chunks (default non-anomaly)
     flags = [False] * len(valid_chunks)
     for score, idx in zip(scores, indices):
         if above:
@@ -264,17 +252,15 @@ def detect_behavior(
         else:
             flags[idx] = score < threshold
 
-    # Print all chunks
     chunk_lines = []
     for i, (chunk, flag) in enumerate(zip(valid_chunks, flags)):
         score_val = scores[indices.index(i)] if i in indices else None
         score_str = f"{score_val:.4f}" if score_val is not None else "  N/A "
         marker    = True if flag else False
-        line = f"  Chunk {i + 1:4d}: score = {score_str}{marker}"
         chunk_lines.append((i, marker))
 
-    flags    = fill_gaps(flags, max_gap=max_gap)
-    periods  = group_anomaly_periods(valid_chunks, flags)
+    flags   = fill_gaps(flags, max_gap=max_gap)
+    periods = group_anomaly_periods(valid_chunks, flags)
 
     # print(f"\n  --- {label.replace('_', ' ').title()} Anomaly Periods ---")
     # if periods:
@@ -290,29 +276,30 @@ def detect_behavior(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def loss_aversion(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) -> dict:
+def revenge_trader(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) -> dict:
     trades = parse_trades(file_name)
     # print(f"[+] Loaded {len(trades)} trades from '{file_name}'")
 
-    # Split into chunks of 10 (mirrors overtrader.py)
+    # Split into chunks of 10 (mirrors loss_aversion.py / overtrader.py)
     raw_chunks   = [trades[i:i + 10] for i in range(0, len(trades), 10)]
     valid_chunks = [c for c in raw_chunks if len(c) >= 2]
     # print(f"[+] Chunks: {len(valid_chunks)} (of size ~10 each)\n")
 
-    results = {}
+    results     = {}
+    chunk_lines = {}
 
     # ------------------------------------------------------------------ #
-    # 1. Holding losers too long                                          #
+    # 1. Position size increase immediately after a loss                  #
     # ------------------------------------------------------------------ #
     scores1, idx1 = [], []
     for i, chunk in enumerate(valid_chunks):
-        s = score_holding_losers(chunk)
+        s = score_size_increase_after_loss(chunk)
         if s is not None:
             scores1.append(s)
             idx1.append(i)
 
-    results["holding_losers_too_long"], data = detect_behavior(
-        label        = "holding_losers_too_long",
+    results["size_increase_after_loss"], chunk_lines = detect_behavior(
+        label        = "size_increase_after_loss",
         valid_chunks = valid_chunks,
         scores       = scores1,
         indices      = idx1,
@@ -322,61 +309,21 @@ def loss_aversion(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) ->
     )
 
     # ------------------------------------------------------------------ #
-    # 2. Closing winners too early                                        #
+    # 2. Escalation after a negative P/L streak (>= 2 losses in a row)   #
     # ------------------------------------------------------------------ #
     scores2, idx2 = [], []
     for i, chunk in enumerate(valid_chunks):
-        s = score_closing_winners_early(chunk)
+        s = score_escalation_after_loss_streak(chunk)
         if s is not None:
             scores2.append(s)
             idx2.append(i)
 
-    results["closing_winners_early"] = detect_behavior(
-        label        = "closing_winners_early",
+    results["escalation_after_loss_streak"], chunk_lines = detect_behavior(
+        label        = "escalation_after_loss_streak",
         valid_chunks = valid_chunks,
         scores       = scores2,
         indices      = idx2,
-        above        = False,     # anomaly = duration is too LOW
-        sensitivity  = sensitivity,
-        max_gap      = max_gap,
-    )
-
-    # ------------------------------------------------------------------ #
-    # 3. Risk/reward imbalance                                            #
-    # ------------------------------------------------------------------ #
-    scores3, idx3 = [], []
-    for i, chunk in enumerate(valid_chunks):
-        s = score_risk_reward(chunk)
-        if s is not None:
-            scores3.append(s)
-            idx3.append(i)
-
-    results["risk_reward_imbalance"] = detect_behavior(
-        label        = "risk_reward_imbalance",
-        valid_chunks = valid_chunks,
-        scores       = scores3,
-        indices      = idx3,
-        above        = True,      # anomaly = losses dwarf gains
-        sensitivity  = sensitivity,
-        max_gap      = max_gap,
-    )
-
-    # ------------------------------------------------------------------ #
-    # 4. Avg loss size > avg win size                                     #
-    # ------------------------------------------------------------------ #
-    scores4, idx4 = [], []
-    for i, chunk in enumerate(valid_chunks):
-        s = score_loss_size(chunk)
-        if s is not None:
-            scores4.append(s)
-            idx4.append(i)
-
-    results["loss_size_exceeds_win_size"] = detect_behavior(
-        label        = "loss_size_exceeds_win_size",
-        valid_chunks = valid_chunks,
-        scores       = scores4,
-        indices      = idx4,
-        above        = True,      # anomaly = loss qty ratio is too HIGH
+        above        = True,      # anomaly = ratio is too HIGH
         sensitivity  = sensitivity,
         max_gap      = max_gap,
     )
@@ -385,17 +332,62 @@ def loss_aversion(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) ->
     # Final summary                                                       #
     # ------------------------------------------------------------------ #
     # print(f"\n{'=' * 60}")
-    # print("  LOSS AVERSION — SUMMARY")
+    # print("  REVENGE TRADER — SUMMARY")
     # print(f"{'=' * 60}")
     # for behavior, periods in results.items():
-    #     print(f"  {behavior:<35} {len(periods):>4} anomaly period(s)")
+    #     print(f"  {behavior:<40} {len(periods):>4} anomaly period(s)")
 
-    return results, data
+    return results, chunk_lines
+
+
+def _mad_threshold(scores: list[float], sensitivity: float, above: bool) -> float:
+    sv = sorted(scores)
+    n  = len(sv)
+    median = sv[n // 2] if n % 2 != 0 else (sv[n // 2 - 1] + sv[n // 2]) / 2
+    devs   = sorted(abs(v - median) for v in scores)
+    mad    = devs[n // 2] if n % 2 != 0 else (devs[n // 2 - 1] + devs[n // 2]) / 2
+    spread = sensitivity * 1.4826 * mad
+    return median + spread if above else median - spread
+
+
+def _flags_for(score_map: dict[int, float], n: int, sensitivity: float,
+               above: bool, max_gap: int) -> list[bool]:
+    if not score_map:
+        return [False] * n
+    threshold = _mad_threshold(list(score_map.values()), sensitivity, above)
+    flags = [False] * n
+    for idx, s in score_map.items():
+        flags[idx] = s > threshold if above else s < threshold
+    return fill_gaps(flags, max_gap)
+
+
+def get_flags(valid_chunks: list, sensitivity: float = 1.5, max_gap: int = 2):
+    '''
+    Silent version: accepts pre-parsed chunks (each chunk is a list of Trade),
+    returns flags_dict without any printing:
+    {
+        "size_increase_after_loss":    list[bool],
+        "escalation_after_loss_streak":list[bool],
+    }
+    '''
+    n = len(valid_chunks)
+
+    sal_map = {i: s for i in range(n) if (s := score_size_increase_after_loss(valid_chunks[i]))     is not None}
+    esc_map = {i: s for i in range(n) if (s := score_escalation_after_loss_streak(valid_chunks[i])) is not None}
+
+    return {
+        "size_increase_after_loss":    _flags_for(sal_map, n, sensitivity, above=True, max_gap=max_gap),
+        "escalation_after_loss_streak":_flags_for(esc_map, n, sensitivity, above=True, max_gap=max_gap),
+    }
 
 
 def main():
-    file_name = "uploads/surprise_200k_trades.csv"
-    loss_aversion(file_name)
+    file_name = "uploads/mixed_trader.csv"
+    _, chunk_lines = revenge_trader(file_name)
+    for behavior, lines in chunk_lines.items():
+        print(f"\n--- {behavior} ---")
+        for line in lines:
+            print(line)
 
 
 if __name__ == "__main__":
