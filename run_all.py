@@ -4,7 +4,7 @@ from revenge_trader import revenge_trader
 
 
 def run_all(file_name: str, sensitivity: float = 1.5, max_gap: int = 2) -> dict:
-    _, ot_chunk_lines = overtrader(file_name, sensitivity, max_gap)
+    _, ot_chunk_lines, _ = overtrader(file_name, sensitivity, max_gap)
     la_results, la_chunk_lines = loss_aversion(file_name, sensitivity, max_gap)
     rt_results, rt_chunk_lines = revenge_trader(file_name, sensitivity, max_gap)
     final_chunk_lines = []
