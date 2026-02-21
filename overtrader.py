@@ -122,6 +122,39 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2):
             )
             time.append(timestamp)
 
+        trades = []
+
+        with open(file_name, "r") as file:
+            next(file)
+            for line in file:
+                parts = line.strip().split(",")
+                if len(parts) < 8:
+                    continue
+                raw = parts[0].strip()
+                if " " not in raw:
+                    continue
+                date_part, time_part = raw.split(" ")
+                y, mo, d = date_part.split("-")
+                h, mi, s = time_part.split(":")
+                ts = Timestamp(int(y), int(mo), int(d), int(h), int(mi), int(s))
+                trades.append(Trade(
+                    timestamp   = ts,
+                    asset       = parts[1].strip(),
+                    side        = parts[2].strip(),
+                    quantity    = float(parts[3]),
+                    entry_price = float(parts[4]),
+                    exit_price  = float(parts[5]),
+                    profit_loss = float(parts[6]),
+                    balance     = float(parts[7])
+                ))
+
+        print(f"\nLoaded {len(trades)} trades from {file_name}\n")
+
+        results = {
+            "time_clustering":  detect_time_clustering(trades, sensitivity, max_gap),
+            "reactive_trading": detect_reactive_trading(trades, sensitivity, max_gap, reactive_window_s),
+        }
+
     # Split into chunks of 10
     chunks = [time[i:i + 10] for i in range(0, len(time), 10)]
 
@@ -172,7 +205,7 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2):
     # for period in overtraded:
     #     print(period)
 
-    return overtraded, chunk_lines
+    return overtraded, chunk_lines, results
 
 def main():
     file_name = "uploads/mixed_trader.csv"
