@@ -334,8 +334,8 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2, reactive_window_s=300):
     return overtraded, chunk_lines, results
 
 def main():
-    file_name = "uploads/mixed_trader.csv"
-    _, chunk_lines = overtrader(file_name)
+    file_name = "uploads/surprise_200k_trades.csv"
+    _, chunk_lines, _ = overtrader(file_name)
     for line in chunk_lines:
         print(line)
 
