@@ -275,12 +275,17 @@ def fomo_trader(file_name, sensitivity=1.5, max_gap=2):
     for period in fomo_periods:
         print(period)
 
-    return fomo_periods
+    chunk_lines = []
+    for chunk, anomaly in zip(valid_chunks, is_anomaly):
+        label = f"{chunk[0].timestamp.to_string()};{chunk[-1].timestamp.to_string()}"
+        chunk_lines.append((label, anomaly))
+
+    return fomo_periods, chunk_lines
 
 
 def main():
     file_name = "uploads/mixed_trader.csv"
-    fomo_trader(file_name)
+    fomo_trader(file_name)[0]
 
 
 if __name__ == "__main__":
