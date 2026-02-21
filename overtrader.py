@@ -1,3 +1,10 @@
+'''
+SIMPLY CALL THE FUNCTION overtrader(file_name, sensitivity=1.5, max_gap=2)
+IT SHOULD RETURN AN ARRAY OF ANOMOLIES LIKE THIS
+ex: 2025-03-02 23:54:50;2025-03-03 00:15:50
+'''
+
+
 from dataclasses import dataclass
 
 @dataclass
