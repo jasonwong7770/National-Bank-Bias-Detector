@@ -172,3 +172,11 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2):
         print(period)
 
     return overtraded
+
+def main():
+    file_name = "uploads/mixed_trader.csv"
+    overtrader(file_name)
+
+if __name__ == "__main__":
+    main()
+
