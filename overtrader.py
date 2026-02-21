@@ -66,7 +66,7 @@ def calculate_threshold(averages, sensitivity=1.5):
     # Scale factor 1.4826 makes MAD comparable to std dev for normal distributions
     threshold = median - sensitivity * (1.4826 * mad)
     
-    print(f"Median: {median:.1f}s | MAD: {mad:.1f}s | Anomaly threshold: below {threshold:.1f}s\n")
+    # print(f"Median: {median:.1f}s | MAD: {mad:.1f}s | Anomaly threshold: below {threshold:.1f}s\n")
     return threshold
 
 
@@ -143,10 +143,11 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2):
     # Third pass — fill small gaps so nearby anomaly regions merge
     is_anomaly = fill_gaps(is_anomaly, max_gap=max_gap)
 
-    # Print all chunks
-    for idx, (chunk, result, anomaly) in enumerate(zip(valid_chunks, averages, is_anomaly)):
-        flag = " *** ANOMALY" if anomaly else ""
-        print(f"Chunk {idx + 1}: avg = {result['formatted']} ({result['avg_seconds']:.1f}s){flag}")
+    # Build chunk summary lines
+    chunk_lines = []
+    for chunk, _, anomaly in zip(valid_chunks, averages, is_anomaly):
+        isflag = True if anomaly else False
+        chunk_lines.append((f"{chunk[0].to_string()};{chunk[-1].to_string()}", isflag))
 
     # Final pass — group consecutive anomaly chunks into periods
     overtraded    = []
@@ -167,15 +168,17 @@ def overtrader(file_name, sensitivity=1.5, max_gap=2):
     if anomaly_start is not None:
         overtraded.append(f"{anomaly_start.to_string()};{anomaly_end.to_string()}")
 
-    print("\n--- Overtrading Periods ---")
-    for period in overtraded:
-        print(period)
+    # print("\n--- Overtrading Periods ---")
+    # for period in overtraded:
+    #     print(period)
 
-    return overtraded
+    return overtraded, chunk_lines
 
 def main():
     file_name = "uploads/mixed_trader.csv"
-    overtrader(file_name)
+    _, chunk_lines = overtrader(file_name)
+    for line in chunk_lines:
+        print(line)
 
 if __name__ == "__main__":
     main()
