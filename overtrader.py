@@ -105,7 +105,7 @@ def fill_gaps(is_anomaly_flags, max_gap=2):
 def overtrader(file_name, sensitivity=1.5, max_gap=2):
     time = []
 
-    with open(file_name, "r") as file:
+    with    open(file_name, "r") as file:
         next(file)
         for line in file:
             raw = line.split(",")[0].strip()
