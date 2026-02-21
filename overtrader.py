@@ -1,7 +1,10 @@
 '''
-SIMPLY CALL THE FUNCTION overtrader(file_name, sensitivity=1.5, max_gap=2)
-IT SHOULD RETURN AN ARRAY OF ANOMOLIES LIKE THIS
-ex: 2025-03-02 23:54:50;2025-03-03 00:15:50
+CALL: overtrader(file_name, sensitivity=1.5, max_gap=2)
+
+Returns an array of anomaly periods which indicates overtrading:
+["2025-03-01 09:30:00;2025-03-01 10:00:00", ...]
+
+Each entry = "start_timestamp;end_timestamp" of an anomaly window.
 '''
 
 
@@ -105,7 +108,7 @@ def fill_gaps(is_anomaly_flags, max_gap=2):
 def overtrader(file_name, sensitivity=1.5, max_gap=2):
     time = []
 
-    with open(file_name, "r") as file:
+    with    open(file_name, "r") as file:
         next(file)
         for line in file:
             raw = line.split(",")[0].strip()
